@@ -63,16 +63,18 @@ Koordinaten für beliebige Gebiete in Raum Frankfurt
 
 ## Projektstruktur
 
+```
 solar-finder/
 ├── scripts/
-│   └── main.py          # Hauptskript
+│   └── main.py              # Hauptskript
 ├── notebooks/
 │   └── solar_analyse.ipynb  # Jupyter Notebook
-├── data/                # Rohe Geodaten
+├── data/                    # Rohe Geodaten
 └── output/
-├── karte.html       # Interaktive Karte
-├── top_flaechen.geojson
-└── top_flaechen.csv
+    ├── karte.html           # Interaktive Karte
+    ├── top_flaechen.geojson
+    └── top_flaechen.csv
+```
 
 
 # Datenquellen
