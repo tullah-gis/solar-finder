@@ -85,6 +85,11 @@ solar-finder/
 | OpenStreetMap | Autobahnen, Bahnlinien |
 
 
+## Vorschau
+
+![Solar Finder Karte](img/map-solar-finder.png)
+
+
 ## Technologien
 
 - Python 3.11
