@@ -145,6 +145,23 @@ def lade_alkis():
 
 
 def berechne_scoring(flaechen, autobahnen, bahnlinien):
+    # DEBUG
+    print(f"Flächen CRS: {flaechen.crs}")
+    print(f"Autobahnen CRS: {autobahnen.crs}")
+    print(f"Anzahl Flächen vor Filter: {len(flaechen)}")
+
+    if len(flaechen) == 0:
+        print("FEHLER: Keine geeigneten Flächen gefunden.")
+        return flaechen
+
+    # Infrastruktur auf UTM umstellen
+    autobahnen_m = autobahnen.to_crs(epsg=25832)
+    bahnlinien_m = bahnlinien.to_crs(epsg=25832)
+
+    # Flächen auch auf UTM umstellen falls nötig
+    if flaechen.crs.to_epsg() != 25832:
+        print("Konvertiere Flächen zu UTM...")
+        flaechen = flaechen.to_crs(epsg=25832)
 
     # Prüfen ob Flächen vorhanden
     if len(flaechen) == 0:
@@ -184,6 +201,7 @@ def berechne_scoring(flaechen, autobahnen, bahnlinien):
     flaechen["score_flaeche"] = flaechen["area_ha"]
     flaechen["score_infra"]   = 1 / (flaechen["dist_autobahn_m"] + 1)
 
+
     scaler = MinMaxScaler()
     flaechen[["score_flaeche", "score_infra"]] = scaler.fit_transform(
         flaechen[["score_flaeche", "score_infra"]]
@@ -214,6 +232,86 @@ def kategorie_nach_score(score):
         return "Mittel geeignet"
     else:
         return "Wenig geeignet"
+
+
+def berechne_pvgis(flaechen):
+    """
+    Berechnet Sonneneinstrahlung für den Mittelpunkt jeder Fläche.
+    Außerdem: Energiepotenzial und CO₂-Einsparung.
+    """
+    print("Lade Sonneneinstrahlung von PVGIS...")
+
+    ertraege = []
+    einstrahlungen = []
+
+    for idx, row in flaechen.iterrows():
+        # Mittelpunkt der Fläche berechnen
+        mittelpunkt = row.geometry.centroid
+        lat = mittelpunkt.y
+        lon = mittelpunkt.x
+
+        try:
+            response = requests.get(
+                "https://re.jrc.ec.europa.eu/api/v5_2/PVcalc",
+                params={
+                    "lat": lat,
+                    "lon": lon,
+                    "peakpower": 1,
+                    "loss": 14,
+                    "outputformat": "json"
+                },
+                timeout=30
+            )
+            data = response.json()
+            ertrag       = data["outputs"]["totals"]["fixed"]["E_y"]
+            einstrahlung = data["outputs"]["totals"]["fixed"]["H(i)_y"]
+
+        except Exception as e:
+            print(f"  PVGIS Fehler für Fläche {idx}: {e}")
+            ertrag       = None
+            einstrahlung = None
+
+        ertraege.append(ertrag)
+        einstrahlungen.append(einstrahlung)
+        print(f"  Fläche {idx}: {einstrahlung} kWh/m²")
+        time.sleep(1)  # Pause damit PVGIS nicht überlastet wird
+
+    flaechen["solar_kwh_m2"]     = einstrahlungen
+    flaechen["solar_ertrag_kwp"] = ertraege
+
+    # Energiepotenzial: 150 Wp/m², 80% Flächennutzung
+    flaechen["energie_mwh_jahr"] = (
+        flaechen["area_ha"] * 10000
+        * 0.80
+        * 0.15
+        * flaechen["solar_ertrag_kwp"]
+        / 1000
+    )
+
+    # CO₂-Einsparung: 400g CO₂ pro kWh Netzstrom
+    flaechen["co2_t_jahr"] = flaechen["energie_mwh_jahr"] * 1000 * 0.4 / 1000
+
+    print(f"\nPVGIS abgeschlossen:")
+    print(flaechen[["area_ha", "solar_kwh_m2", "energie_mwh_jahr", "co2_t_jahr"]].round(1))
+    return flaechen
+
+
+def berechne_solar_score(flaechen):
+    """Score um Solar-Komponente erweitern nach PVGIS"""
+
+    scaler = MinMaxScaler()
+    flaechen[["score_solar"]] = scaler.fit_transform(
+        flaechen[["solar_kwh_m2"]]
+    )
+
+    # Score neu berechnen: 30% Fläche, 40% Infrastruktur, 30% Solar
+    flaechen["score_gesamt"] = (
+        flaechen["score_flaeche"] * 0.3 +
+        flaechen["score_infra"]   * 0.4 +
+        flaechen["score_solar"]   * 0.3
+    )
+
+    return flaechen.sort_values("score_gesamt", ascending=False)
 
 
 def erstelle_karte(flaechen, autobahnen, bahnlinien):
@@ -250,7 +348,9 @@ def erstelle_karte(flaechen, autobahnen, bahnlinien):
             f"Nutzung: {row.TNTXT[:50]}...<br>"
             f"Fläche: {row.area_ha:.1f} ha<br>"
             f"Abstand Autobahn: {row.dist_autobahn_m:.0f} m<br>"
-            f"Abstand Bahn: {row.dist_bahn_m:.0f} m<br>"
+            f"Sonneneinstrahlung: {row.solar_kwh_m2:.0f} kWh/m²<br>"
+            f"Energiepotenzial: {row.energie_mwh_jahr:.0f} MWh/Jahr<br>"
+            f"CO₂-Einsparung: {row.co2_t_jahr:.0f} t/Jahr<br>"
             f"Score: {row.score_gesamt:.3f}",
             max_width=250
         )
@@ -297,7 +397,15 @@ def erstelle_karte(flaechen, autobahnen, bahnlinien):
             vertical-align:middle; border:1px solid red;"></span>
         Wenig geeignet (Score &lt; 0.33)<br><br>
         <hr style="margin:8px 0;">
-        <b>Datenquelle:</b> ALKIS Frankfurt<br>
+        <b>Scoring-Gewichtung:</b><br>
+        • 30% Flächengröße<br>
+        • 40% Nähe Infrastruktur<br>
+        • 30% Sonneneinstrahlung<br><br>
+        <hr style="margin:8px 0;">
+        <b>Datenquellen:</b><br>
+        • ALKIS Frankfurt (Flurstücke)<br>
+        • OpenStreetMap (Infrastruktur)<br>
+        • PVGIS (Sonneneinstrahlung)<br><br>
         <b>Filterkriterien:</b><br>
         • Fläche &gt; 7 ha<br>
         • &lt; 2km von Autobahn/Bahn<br>
@@ -337,24 +445,24 @@ def exportiere(flaechen, karte):
 # ─────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("Solarpark Flächensuche gestartet")
-    print("=" * 50)
-
-    # 1. Daten laden
     autobahnen = lade_osm('"highway"="motorway"', "Autobahnen")
     bahnlinien = lade_osm('"railway"="rail"',     "Bahnlinien")
     flaechen   = lade_alkis()
 
-    # 2. Filtern & Scoring
-    flaechen = berechne_scoring(flaechen, autobahnen, bahnlinien)
+    # 1. PVGIS zuerst
+    flaechen_wgs = flaechen.to_crs(epsg=4326)
+    flaechen_wgs = berechne_pvgis(flaechen_wgs)
 
-    # 3. Karte erstellen
+    # 2. Basis-Scoring
+    flaechen = berechne_scoring(flaechen_wgs, autobahnen, bahnlinien)
+
+    # 3. Solar-Score einberechnen
+    flaechen = berechne_solar_score(flaechen)
+
     karte = erstelle_karte(flaechen, autobahnen, bahnlinien)
-
-    # 4. Exportieren
     exportiere(flaechen, karte)
 
     print("\nTop 5 Flächen:")
-    print(flaechen[["TNTXT", "area_ha", "dist_autobahn_m", "score_gesamt"]].head(5).round(2))
+    print(flaechen[["TNTXT", "area_ha", "dist_autobahn_m",
+                    "solar_kwh_m2", "energie_mwh_jahr", "score_gesamt"]].head(5).round(2))
     print("\nFertig!")

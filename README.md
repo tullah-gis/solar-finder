@@ -4,7 +4,7 @@ Automatisierte Flächensuche für Solarparks im Raum Frankfurt.
 
 ## Was macht dieses Tool?
 
-Analysiert Geodaten aus ALKIS (Kataster) und OpenStreetMap um geeignete 
+Analysiert Geodaten aus ALKIS (Kataster), OpenStreetMap und PVGIS um geeignete 
 Grundstücke für Solarparks zu identifizieren und zu bewerten.
 
 **Filterkriterien:**
@@ -13,8 +13,13 @@ Grundstücke für Solarparks zu identifizieren und zu bewerten.
 - Weniger als 2km Entfernung zu Autobahn oder Bahnlinie
 
 **Scoring-Modell:**
-- 40% Flächengröße
-- 60% Nähe zur Infrastruktur
+- 30% Flächengröße
+- 40% Nähe zur Infrastruktur
+- 30% Sonneneinstrahlung (PVGIS)
+
+**Berechnung pro Fläche:**
+- Jährliches Energiepotenzial in MWh
+- CO₂-Einsparung in Tonnen/Jahr
 
 ## Ergebnisse
 
@@ -83,6 +88,7 @@ solar-finder/
 |--------|--------|
 | ALKIS Frankfurt | Flurstücke, Nutzungsarten |
 | OpenStreetMap | Autobahnen, Bahnlinien |
+| PVGIS (EU JRC) | Sonneneinstrahlung kWh/m² | 
 
 
 ## Vorschau
